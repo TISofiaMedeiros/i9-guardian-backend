@@ -5,16 +5,9 @@ import dotenv from "dotenv";
 import { GoogleGenerativeAI } from "@google/generative-ai";
 
 dotenv.config();
-
 const app = express();
 app.use(cors());
-app.use(express.json({ limit: "15kb" }));
-
-// --- 🖋️ CHARSET UTF-8 ---
-app.use((req, res, next) => {
-    res.setHeader('Content-Type', 'application/json; charset=utf-8');
-    next();
-});
+app.use(express.json());
 
 // --- 🗄️ PERSISTÊNCIA MONGODB ---
 mongoose.connect(process.env.MONGO_URI)
@@ -25,85 +18,74 @@ const userSchema = new mongoose.Schema({
     user: String,
     humorAtual: String,
     historico: [String],
-    ultimoCheckIn: Date // 🆕 Campo para controle proativo
+    ultimoCheckIn: Date,
+    notificacaoPendente: String // 🆕 Armazena o "chamado" da IA
 });
 const User = mongoose.model("User", userSchema);
 
-// --- 🔑 CONFIG IA ---
+// --- 🔑 CONFIG IA GEMINI ---
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash-latest" });
 
-// --- ❤️ FUNÇÕES DE APOIO ---
-async function gerarRespostaIA(prompt, tentativas = 3) {
-    for (let i = 0; i < tentativas; i++) {
-        try {
-            const timeout = new Promise((_, reject) =>
-                setTimeout(() => reject(new Error("Timeout")), 9000)
-            );
-            const result = await Promise.race([model.generateContent(prompt), timeout]);
-            return result.response.text();
-        } catch (err) {
-            if (i === tentativas - 1) throw err;
-        }
+async function gerarRespostaIA(prompt) {
+    try {
+        const result = await model.generateContent(prompt);
+        return result.response.text();
+    } catch (err) {
+        return "💛 Passei aqui para te dar um abraço virtual.";
     }
 }
 
-function detectarHumor(texto) {
-    const t = texto.toLowerCase();
-    if (t.includes("triste") || t.includes("mal") || t.includes("sozinha")) return "triste";
-    if (t.includes("raiva") || t.includes("ódio") || t.includes("brava")) return "raiva";
-    if (t.includes("ansiedade") || t.includes("medo") || t.includes("nervosa")) return "ansiedade";
-    if (t.includes("feliz") || t.includes("consegui") || t.includes("amo")) return "positivo";
-    return "neutro";
-}
+// --- 🔥 MONITOR PROATIVO (Lógica Sofia) ---
+setInterval(async () => {
+    const users = await User.find();
+    const agora = new Date();
+    for (const u of users) {
+        // Se estiver em silêncio por mais de 1 hora (3600000ms)
+        if (!u.ultimoCheckIn || (agora - u.ultimoCheckIn) > 3600000) {
+            const prompt = `A usuária ${u.user} está ausente. Ela estava com humor ${u.humorAtual}. Chame-a com carinho e brevidade usando 💛🌿.`;
+            const mensagem = await gerarRespostaIA(prompt);
 
-// --- 💬 ROTA DE CHAT ---
+            u.notificacaoPendente = mensagem;
+            u.ultimoCheckIn = agora;
+            await u.save();
+            console.log(`🔔 IA gerou chamado para: ${u.user}`);
+        }
+    }
+}, 60000); // Checa a cada minuto
+
+// --- 💬 ROTAS DE COMUNICAÇÃO ---
 app.post("/chat", async (req, res) => {
     const { message, user = "Sofia Maria" } = req.body;
-
     try {
         let u = await User.findOne({ user });
         if (!u) u = new User({ user, humorAtual: "neutro", historico: [], ultimoCheckIn: new Date() });
 
-        const humor = detectarHumor(message);
-        u.humorAtual = humor;
-        u.historico.push(message);
-        if (u.historico.length > 10) u.historico.shift();
-
-        const prompt = `Você é a Gangle, guardiã da i9-Guardian. 
-        Usuária: ${user}. Humor: ${humor}. Histórico: ${u.historico.join(" | ")}.
-        Seja empática, breve e use 💛🌿. Mensagem: "${message}"`;
-
+        const prompt = `Você é a Gangle, guardiã da i9-Guardian. Usuária: ${user}. Responda com carinho: "${message}"`;
         const reply = await gerarRespostaIA(prompt);
+
+        u.historico.push(message);
+        if (u.historico.length > 5) u.historico.shift();
+        u.ultimoCheckIn = new Date(); // Reseta o tempo de silêncio
+        u.notificacaoPendente = null; // Limpa notificações ao interagir
         await u.save();
-        res.json({ reply, humor });
+
+        res.json({ reply });
     } catch (e) {
-        res.json({ reply: "💛 Estou aqui com você, tive um soluço mas não solto sua mão.", humor: "neutro" });
+        res.status(500).json({ reply: "💛 Conexão instável." });
     }
 });
 
-// --- 🔔 ROTA DE CHECK-IN PROATIVO ---
 app.get("/check-in/:user", async (req, res) => {
-    const { user } = req.params;
-    const u = await User.findOne({ user });
-
-    if (!u) return res.json({ trigger: false });
-
-    const agora = new Date();
-    // 🔥 Trava de 30 minutos entre check-ins
-    if (u.ultimoCheckIn && (agora - u.ultimoCheckIn) < 1000 * 60 * 30) {
-        return res.json({ trigger: false });
+    const u = await User.findOne({ user: req.params.user });
+    if (u && u.notificacaoPendente) {
+        const msg = u.notificacaoPendente;
+        u.notificacaoPendente = null;
+        await u.save();
+        return res.json({ trigger: true, message: msg });
     }
-
-    u.ultimoCheckIn = agora;
-    await u.save();
-
-    let mensagem = "💛 Passei aqui pra saber de você… como tá seu dia?";
-    if (u.humorAtual === "triste") mensagem = "💛 Ei… pensei em você agora. Como você tá se sentindo?";
-    if (u.humorAtual === "ansiedade") mensagem = "🌿 Vamos respirar juntas um pouquinho? Eu tô aqui.";
-
-    res.json({ trigger: true, message: mensagem });
+    res.json({ trigger: false });
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, '0.0.0.0', () => console.log(`🚀 Servidor i9 na porta ${PORT}`));
+app.listen(PORT, '0.0.0.0', () => console.log(`🚀 i9-Guardian Backend Online`));
