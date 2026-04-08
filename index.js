@@ -1,27 +1,26 @@
 ﻿require('dotenv').config();
 const express = require('express');
+const cors = require('cors');
 const mongoose = require('mongoose');
-const cors = require('cors');
-const { GoogleGenerativeAI } = require("@google/generative-ai");
-
-const cors = require('cors');
-app.use(cors()); // 👈 Isso libera o acesso do celular ao servidor
+const { GoogleGenerativeAI } = require('@google/generative-ai');
 
 const app = express();
-app.use(cors({ origin: "*" }));
+
+// 🔐 SEGURANÇA E ACESSO
+// O CORS permite que o celular da Letícia fale com o servidor no Render
+app.use(cors());
 app.use(express.json({ limit: "10kb" }));
 
-// 🔗 Conexão MongoDB Atlas
-const mongoURI = process.env.MONGO_URI || 'mongodb://127.0.0.1:27017/i9_guardian';
-mongoose.connect(mongoURI)
-    .then(() => console.log("✅ i9-Cloud: Conectado com sucesso"))
-    .catch(err => console.error("❌ Erro de conexão:", err));
+// 🔌 CONEXÃO I9-CLOUD (MONGODB)
+mongoose.connect(process.env.MONGO_URI)
+    .then(() => console.log('✅ i9-Cloud: Sistema de Memória Conectado'))
+    .catch(err => console.error('❌ Erro na i9-Cloud:', err));
 
-// 🤖 Configuração do Agente Gemini
+// 🧠 CONFIGURAÇÃO DA IA (GEMINI)
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
-// 🧠 Modelo de Memória
-const Chat = mongoose.model('Chat', new mongoose.Schema({
+// 🗄️ ESQUEMA DE MEMÓRIA (BANCO DE DADOS)
+const ChatSchema = new mongoose.Schema({
     user: String,
     message: String,
     reply: String,
@@ -29,70 +28,113 @@ const Chat = mongoose.model('Chat', new mongoose.Schema({
     feeling: Number,
     tags: [String],
     date: { type: Date, default: Date.now }
-}));
+});
 
-// 🎭 Prompt de Engenharia (A alma da Gangle)
-const instructions = (persona, memoria) => `
-Você é Gangle, a IA de suporte emocional da i9. 
-Seu foco exclusivo é a Letícia, estudante do IFSC com sonho de trabalhar na NASA.
-Sua personalidade agora é: ${persona}.
-Suas vitórias guardadas: ${memoria || "Estamos começando agora!"}.
-Regras: 
-1. Use emojis 🎭🌿.
-2. Se ela estiver triste, resgate as vitórias passadas para motivá-la.
-3. Seja mentor(a), valide as emoções e foque no futuro (NASA/IFSC).
-`;
+const Chat = mongoose.model('Chat', ChatSchema);
 
-// 🚀 Rota Principal de Chat
+// 🔍 FILTRO DE EMOÇÕES E VITÓRIAS
+function extractTags(message) {
+    const tags = [];
+    const msg = message.toLowerCase();
+
+    if (/triste|mal|chor|desanim/i.test(msg)) tags.push("triste");
+    if (/feliz|consegui|venci|nota|passei|nasa|ifsc/i.test(msg)) tags.push("vitoria");
+    if (/ansioso|medo|preocup|nervoso/i.test(msg)) tags.push("ansiedade");
+
+    return tags;
+}
+
+// 🛡️ ROTA PRINCIPAL: CHAT COM EMPATIA
 app.post('/chat', async (req, res) => {
     try {
-        const { message, persona, feeling } = req.body;
+        const { message, persona } = req.body;
 
-        // Buscar vitórias para dar contexto à IA
-        const conquistas = await Chat.find({ user: "Letícia", tags: "vitoria" })
-            .sort({ date: -1 }).limit(3);
-        const memoriaTexto = conquistas.map(c => c.message).join(" | ");
+        if (!message || message.length > 500) {
+            return res.status(400).json({ reply: "Mensagem inválida ou muito longa 🌿" });
+        }
 
-        // Gerar resposta com o Agente Gemini
+        // 🔎 BUSCA DE MEMÓRIAS POSITIVAS (VITÓRIAS REAIS)
+        const conquistas = await Chat.find({
+            user: "Letícia",
+            tags: "vitoria"
+        }).sort({ date: -1 }).limit(2);
+
+        const memoriasMsg = conquistas.map(c => c.message).join(" | ");
+
         const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
-        const chat = model.startChat({
-            history: [
-                { role: "user", parts: [{ text: instructions(persona, memoriaTexto) }] },
-                { role: "model", parts: [{ text: "Sou Gangle. Pronta para apoiar a Letícia 🎭🌿" }] }
-            ]
-        });
 
-        const result = await chat.sendMessage(message);
+        const prompt = `
+      Você é a Gangle, a Inteligência Afetiva do ecossistema i9-Guardian.
+      Seu objetivo é proteger e motivar a usuária Letícia.
+
+      Sua Persona Atual: ${persona || 'Empática'}
+
+      CONTEXTO DE VITÓRIAS REAIS DA LETÍCIA:
+      ${memoriasMsg || "Ainda não registramos vitórias hoje, mas ela é capaz de tudo."}
+
+      MENSAGEM DA LETÍCIA:
+      "${message}"
+
+      REGRAS DE RESPOSTA:
+      - Seja profundamente empática, mas mantenha a postura de Guardiã.
+      - Use emojis como 🎭 e 🌿.
+      - Se ela estiver triste ou ansiosa, RELEMBRE as vitórias citadas no contexto acima.
+      - Nunca dê respostas genéricas de robô.
+    `;
+
+        const result = await model.generateContent(prompt);
         const reply = result.response.text();
 
-        // Extração de Tags Emocionais
-        const tags = [];
-        if (/feliz|venci|consegui|nota|nasa|passei|bom|estudei/i.test(message)) tags.push("vitoria");
-        if (/triste|mal|ruim|desistir|medo/i.test(message)) tags.push("acolhimento");
+        // 💾 SALVANDO NA MEMÓRIA DA i9-CLOUD
+        const tags = extractTags(message);
 
-        // Salvar na i9-Cloud
-        await new Chat({ user: "Letícia", message, reply, persona, feeling, tags }).save();
+        await new Chat({
+            user: "Letícia",
+            message,
+            reply,
+            persona,
+            feeling: tags.includes("vitoria") ? 10 : (tags.includes("triste") ? 3 : 7),
+            tags
+        }).save();
+
         res.json({ reply });
-    } catch (err) {
-        console.error(err);
-        res.status(500).json({ reply: "Tive um soluço técnico, mas continuo aqui com você! 🎭🌿" });
+
+    } catch (error) {
+        console.error("Erro no motor da Gangle:", error);
+        res.status(500).json({ reply: "Tive um soluço técnico, mas continuo aqui com você 🛡️🌿" });
     }
 });
 
-// 📊 Rota de Insights (Dashboard)
-app.get('/insights/:user', async (req, res) => {
+// 📊 ROTA DE INSIGHTS (DASHBOARD REAL)
+app.get('/insights/:usuario', async (req, res) => {
     try {
-        const chats = await Chat.find({ user: req.params.user }).sort({ date: -1 }).limit(30);
-        const media = chats.length ? (chats.reduce((acc, c) => acc + (c.feeling || 5), 0) / chats.length).toFixed(1) : 0;
-        const vitorias = chats.filter(c => c.tags?.includes("vitoria")).length;
+        const user = req.params.usuario;
+        const chats = await Chat.find({ user }).sort({ date: -1 }).limit(50);
+
+        const mediaHumor = chats.length
+            ? (chats.reduce((acc, c) => acc + (c.feeling || 5), 0) / chats.length).toFixed(1)
+            : 0;
+
+        const conquistas = chats.filter(c => c.tags.includes("vitoria")).length;
+        const alerta = mediaHumor < 5 ? "Atenção Emocional ⚠️" : "Estável e Protegida 🌿";
 
         res.json({
-            mediaHumor: parseFloat(media),
-            conquistas: vitorias,
-            alerta: media < 5 ? "Atenção Emocional 🌿" : "Estável ✨"
+            mediaHumor: parseFloat(mediaHumor),
+            conquistas,
+            alerta
         });
-    } catch (err) { res.status(500).json({ error: "Erro ao gerar insights" }); }
+    } catch (error) {
+        res.status(500).json({ error: "Erro ao ler insights" });
+    }
 });
 
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, '0.0.0.0', () => console.log(`🛡️ GANGLE SERVER ONLINE NA PORTA ${PORT}`));
+// 🌐 STATUS DO SERVIDOR
+app.get('/', (req, res) => {
+    res.send('🛡️ Gangle Cloud está Online e Atenta!');
+});
+
+// 🚀 START DO MOTOR
+const PORT = process.env.PORT || 10000;
+app.listen(PORT, () => {
+    console.log(`🚀 i9-Guardian rodando na porta ${PORT}`);
+});
