@@ -1,9 +1,8 @@
 {
   "name": "i9-guardian-backend",
   "version": "1.0.0",
-  "description": "Servidor da Gangle Cloud",
-  "main": "index.js",
   "type": "module",
+  "main": "index.js",
   "scripts": {
     "start": "node index.js"
   },
