@@ -6,11 +6,10 @@ require('dotenv').config();
 const app = express();
 
 // --- 🛡️ CONFIGURAÇÃO DE SEGURANÇA E TRÁFEGO ---
-app.use(cors()); // Permite que o App fale com o Railway
-app.use(express.json({ limit: "15kb" })); // Protege contra textos gigantes
+app.use(cors());
+app.use(express.json({ limit: "15kb" }));
 
 // --- 🖋️ FILTRO DE CARACTERES (UTF-8) ---
-// Garante que acentos e emojis não fiquem com caracteres estranhos
 app.use((req, res, next) => {
     res.setHeader('Content-Type', 'application/json; charset=utf-8');
     next();
@@ -19,7 +18,7 @@ app.use((req, res, next) => {
 // --- 🔑 CONFIGURAÇÃO DA IA ---
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
-// --- 🏁 ROTA DE TESTE (Saúde do Servidor) ---
+// --- 🏁 ROTA DE TESTE ---
 app.get('/', (req, res) => {
     res.send('🛡️ Gangle Cloud está Online e Atenta no Railway! 🌿');
 });
@@ -28,37 +27,49 @@ app.get('/', (req, res) => {
 app.post('/chat', async (req, res) => {
     const { message, user, feeling } = req.body;
 
-    try {
-        const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+    // Validação de entrada
+    if (!message) {
+        return res.status(400).json({ reply: "Envie uma mensagem válida." });
+    }
 
-        // A "Alma" da Gangle configurada via Prompt
+    try {
+        // Diagnóstico de Chave no Console do Railway
+        console.log("🔑 API KEY STATUS:", process.env.GEMINI_API_KEY ? "OK" : "NÃO DEFINIDA");
+
+        const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash-latest" });
+
         const prompt = `
-            Você é a Gangle, uma guardiã emocional acolhedora para o app i9-Guardian.
-            Sua missão é cuidar da pessoa chamada ${user || 'Letícia'}.
-            Contexto atual: O humor dela está em nível ${feeling || 5}/10.
-            
-            Diretrizes:
-            - Seja extremamente empática, calma e use emojis acolhedores como 💛, 🌿, ✨.
-            - Se ela estiver em crise (humor < 4), use frases curtas e valide os sentimentos dela.
-            - Nunca julgue. Seja um porto seguro.
-            - Responda à mensagem: "${message}"
+        Você é a Gangle, uma guardiã emocional acolhedora para o app i9-Guardian.
+        Sua missão é cuidar da pessoa chamada ${user || 'Letícia'}.
+        Contexto atual: O humor dela está em nível ${feeling || 5}/10.
+        
+        Diretrizes:
+        - Seja extremamente empática, calma e use emojis acolhedores como 💛, 🌿, ✨.
+        - Se ela estiver em crise (humor < 4), use frases curtas e valide os sentimentos dela.
+        - Nunca julgue. Seja um porto seguro.
+        - Responda à mensagem: "${message}"
         `;
 
+        console.time("⏱️ Tempo de Resposta Gemini");
         const result = await model.generateContent(prompt);
-        const response = await result.response;
-        const text = response.text();
+        const text = result.response.text();
+        console.timeEnd("⏱️ Tempo de Resposta Gemini");
 
         res.json({ reply: text });
 
     } catch (error) {
-        console.error("Erro no Gemini:", error);
+        // 🔥 LOGS DETALHADOS PARA DEBUG NA BANCADA
+        console.error("🔥 ERRO DETALHADO NO BACKEND:",
+            error?.response?.data || error.message || error
+        );
+
         res.status(500).json({
             reply: "💛 Estou com você, mesmo com conexão instável. Vamos tentar de novo?"
         });
     }
 });
 
-// --- 🚀 START DO SERVIDOR ---
+// --- 🚀 INICIALIZAÇÃO DO SERVIDOR ---
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, '0.0.0.0', () => {
     console.log(`🚀 Gangle Cloud rodando na porta ${PORT}`);
