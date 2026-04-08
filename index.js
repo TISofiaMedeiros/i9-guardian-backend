@@ -4,6 +4,9 @@ const mongoose = require('mongoose');
 const cors = require('cors');
 const { GoogleGenerativeAI } = require("@google/generative-ai");
 
+const cors = require('cors');
+app.use(cors()); // 👈 Isso libera o acesso do celular ao servidor
+
 const app = express();
 app.use(cors({ origin: "*" }));
 app.use(express.json({ limit: "10kb" }));
