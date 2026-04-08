@@ -1,5 +1,11 @@
 ﻿const express = require('express');
 const cors = require('cors');
+// Adicione estas opções para garantir que o navegador não bloqueie
+app.use(cors({
+    origin: '*', // Permite que qualquer origem fale com o servidor
+    methods: ['GET', 'POST'],
+    allowedHeaders: ['Content-Type']
+}));
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 require('dotenv').config();
 
