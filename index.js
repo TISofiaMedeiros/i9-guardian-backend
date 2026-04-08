@@ -1,140 +1,57 @@
-﻿require('dotenv').config();
-const express = require('express');
+﻿const express = require('express');
 const cors = require('cors');
-const mongoose = require('mongoose');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
+require('dotenv').config();
 
 const app = express();
 
-// 🔐 SEGURANÇA E ACESSO
-// O CORS permite que o celular da Letícia fale com o servidor no Render
+// 🛡️ CONFIGURAÇÃO DE SEGURANÇA E TRÁFEGO
+// O CORS permite que o Frontend (Web/Mobile) fale com o Railway
 app.use(cors());
-app.use(express.json({ limit: "10kb" }));
+app.use(express.json({ limit: "15kb" })); // Limite seguro para textos
 
-// 🔌 CONEXÃO I9-CLOUD (MONGODB)
-mongoose.connect(process.env.MONGO_URI)
-    .then(() => console.log('✅ i9-Cloud: Sistema de Memória Conectado'))
-    .catch(err => console.error('❌ Erro na i9-Cloud:', err));
-
-// 🧠 CONFIGURAÇÃO DA IA (GEMINI)
+// 🔑 CHAVE DO GEMINI (Deve ser configurada no painel 'Variables' do Railway)
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
-// 🗄️ ESQUEMA DE MEMÓRIA (BANCO DE DADOS)
-const ChatSchema = new mongoose.Schema({
-    user: String,
-    message: String,
-    reply: String,
-    persona: String,
-    feeling: Number,
-    tags: [String],
-    date: { type: Date, default: Date.now }
+// 🏁 ROTA DE TESTE (Para saber se o Railway está Online)
+app.get('/', (req, res) => {
+    res.send('🛡️ Gangle Cloud está Online e Atenta no Railway! 🌿');
 });
 
-const Chat = mongoose.model('Chat', ChatSchema);
-
-// 🔍 FILTRO DE EMOÇÕES E VITÓRIAS
-function extractTags(message) {
-    const tags = [];
-    const msg = message.toLowerCase();
-
-    if (/triste|mal|chor|desanim/i.test(msg)) tags.push("triste");
-    if (/feliz|consegui|venci|nota|passei|nasa|ifsc/i.test(msg)) tags.push("vitoria");
-    if (/ansioso|medo|preocup|nervoso/i.test(msg)) tags.push("ansiedade");
-
-    return tags;
-}
-
-// 🛡️ ROTA PRINCIPAL: CHAT COM EMPATIA
+// 🧠 ROTA PRINCIPAL DO CHAT (A INTELIGÊNCIA DA GANGLE)
 app.post('/chat', async (req, res) => {
+    const { message, user, feeling } = req.body;
+
     try {
-        const { message, persona } = req.body;
-
-        if (!message || message.length > 500) {
-            return res.status(400).json({ reply: "Mensagem inválida ou muito longa 🌿" });
-        }
-
-        // 🔎 BUSCA DE MEMÓRIAS POSITIVAS (VITÓRIAS REAIS)
-        const conquistas = await Chat.find({
-            user: "Letícia",
-            tags: "vitoria"
-        }).sort({ date: -1 }).limit(2);
-
-        const memoriasMsg = conquistas.map(c => c.message).join(" | ");
-
         const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
 
+        // Configuração da Persona Empática (A alma da Gangle)
         const prompt = `
-      Você é a Gangle, a Inteligência Afetiva do ecossistema i9-Guardian.
-      Seu objetivo é proteger e motivar a usuária Letícia.
-
-      Sua Persona Atual: ${persona || 'Empática'}
-
-      CONTEXTO DE VITÓRIAS REAIS DA LETÍCIA:
-      ${memoriasMsg || "Ainda não registramos vitórias hoje, mas ela é capaz de tudo."}
-
-      MENSAGEM DA LETÍCIA:
-      "${message}"
-
-      REGRAS DE RESPOSTA:
-      - Seja profundamente empática, mas mantenha a postura de Guardiã.
-      - Use emojis como 🎭 e 🌿.
-      - Se ela estiver triste ou ansiosa, RELEMBRE as vitórias citadas no contexto acima.
-      - Nunca dê respostas genéricas de robô.
+      Você é a Gangle, uma guardiã emocional acolhedora para o app i9-Guardian.
+      Sua missão é cuidar da pessoa chamada ${user || 'Letícia'}.
+      Contexto atual: O humor dela está em nível ${feeling || 5}/10.
+      
+      Diretrizes:
+      - Seja extremamente empática, calma e use emojis acolhedores como 💛, 🌿, ✨.
+      - Se ela estiver em crise (humor < 4), use frases curtas, técnicas de respiração e valide os sentimentos dela.
+      - Nunca julgue. Seja um porto seguro.
+      - Responda à mensagem: "${message}"
     `;
 
         const result = await model.generateContent(prompt);
-        const reply = result.response.text();
+        const response = await result.response;
+        const text = response.text();
 
-        // 💾 SALVANDO NA MEMÓRIA DA i9-CLOUD
-        const tags = extractTags(message);
-
-        await new Chat({
-            user: "Letícia",
-            message,
-            reply,
-            persona,
-            feeling: tags.includes("vitoria") ? 10 : (tags.includes("triste") ? 3 : 7),
-            tags
-        }).save();
-
-        res.json({ reply });
+        res.json({ reply: text });
 
     } catch (error) {
-        console.error("Erro no motor da Gangle:", error);
-        res.status(500).json({ reply: "Tive um soluço técnico, mas continuo aqui com você 🛡️🌿" });
+        console.error("Erro no Gemini:", error);
+        res.status(500).json({ reply: "💛 Estou com você, mesmo com conexão instável. Vamos tentar de novo?" });
     }
 });
 
-// 📊 ROTA DE INSIGHTS (DASHBOARD REAL)
-app.get('/insights/:usuario', async (req, res) => {
-    try {
-        const user = req.params.usuario;
-        const chats = await Chat.find({ user }).sort({ date: -1 }).limit(50);
-
-        const mediaHumor = chats.length
-            ? (chats.reduce((acc, c) => acc + (c.feeling || 5), 0) / chats.length).toFixed(1)
-            : 0;
-
-        const conquistas = chats.filter(c => c.tags.includes("vitoria")).length;
-        const alerta = mediaHumor < 5 ? "Atenção Emocional ⚠️" : "Estável e Protegida 🌿";
-
-        res.json({
-            mediaHumor: parseFloat(mediaHumor),
-            conquistas,
-            alerta
-        });
-    } catch (error) {
-        res.status(500).json({ error: "Erro ao ler insights" });
-    }
-});
-
-// 🌐 STATUS DO SERVIDOR
-app.get('/', (req, res) => {
-    res.send('🛡️ Gangle Cloud está Online e Atenta!');
-});
-
-// 🚀 START DO MOTOR
-const PORT = process.env.PORT || 10000;
-app.listen(PORT, () => {
-    console.log(`🚀 i9-Guardian rodando na porta ${PORT}`);
+// 🚀 START DO SERVIDOR (AJUSTADO PARA O RAILWAY)
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, '0.0.0.0', () => {
+    console.log(`🚀 Gangle Cloud rodando na porta ${PORT}`);
 });
