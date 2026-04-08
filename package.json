@@ -1,30 +1,15 @@
 {
-  "name": "i9-mobile",
+  "name": "i9-guardian-backend",
   "version": "1.0.0",
-  "main": "node_modules/expo/AppEntry.js",
+  "description": "Servidor da Gangle Cloud",
+  "main": "index.js",
   "scripts": {
-    "start": "expo start",
-    "android": "expo start --android",
-    "ios": "expo start --ios",
-    "web": "expo start --web",
-    "clear": "expo start -c"
+    "start": "node index.js"
   },
   "dependencies": {
-    "axios": "^1.6.7",
-    "expo": "^54.0.0",
-    "expo-constants": "~17.0.3",
-    "expo-notifications": "~0.29.11",
-    "expo-status-bar": "~2.1.0",
-    "react": "18.3.1",
-    "react-dom": "18.3.1",
-    "react-native": "0.76.0",
-    "react-native-web": "~0.19.13",
-    "@expo/metro-runtime": "~4.0.0"
-  },
-  "devDependencies": {
-    "@babel/core": "^7.20.0",
-    "@types/react": "~18.3.12",
-    "typescript": "^5.3.3"
-  },
-  "private": true
+    "express": "^4.18.2",
+    "cors": "^2.8.5",
+    "@google/generative-ai": "^0.2.1",
+    "dotenv": "^16.4.5"
+  }
 }
