@@ -5,28 +5,40 @@ require('dotenv').config();
 
 const app = express();
 
-// --- 🛡️ CONFIGURAÇÃO DE SEGURANÇA E TRÁFEGO ---
+// --- 🛡️ CONFIG ---
 app.use(cors());
-app.use(express.json({ limit: "15kb" }));
+app.use(express.json({ limit: "10kb" }));
 
-// --- 🖋️ FILTRO DE CARACTERES (UTF-8) ---
-// Garante que a Gangle fale português e use emojis sem erros visuais
-app.use((req, res, next) => {
-    res.setHeader('Content-Type', 'application/json; charset=utf-8');
-    next();
-});
+// --- 🧠 MEMÓRIA SIMPLES (em RAM) ---
+const userMemory = {};
 
-// --- 🔑 CONFIGURAÇÃO DA IA ---
+// --- 🔑 IA ---
+if (!process.env.GEMINI_API_KEY) {
+    throw new Error("❌ GEMINI_API_KEY não definida!");
+}
+
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash-latest" });
+const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
 
-// --- 🛠️ FUNÇÃO DE RESILIÊNCIA (SUA VISÃO) ---
-// Sistema de 3 tentativas com Timeout de 10 segundos
-async function gerarRespostaComRetry(model, prompt, tentativas = 3) {
+// --- ❤️ FALLBACK INTELIGENTE ---
+function respostaFallback(message, feeling) {
+    if (feeling < 4) {
+        return "💛 Eu tô aqui com você… respira comigo devagar, tá? Você não está sozinha.";
+    }
+
+    if (message.toLowerCase().includes("rejeitada")) {
+        return "💛 Ser rejeitada dói muito… mas isso não define quem você é. Você é importante.";
+    }
+
+    return "🌿 Tô aqui com você. Me conta mais um pouquinho…";
+}
+
+// --- 🔁 RETRY COM TIMEOUT ---
+async function gerarResposta(prompt, tentativas = 3) {
     for (let i = 0; i < tentativas; i++) {
         try {
             const timeout = new Promise((_, reject) =>
-                setTimeout(() => reject(new Error("Timeout Gemini")), 10000)
+                setTimeout(() => reject(new Error("Timeout Gemini")), 8000)
             );
 
             const result = await Promise.race([
@@ -35,62 +47,84 @@ async function gerarRespostaComRetry(model, prompt, tentativas = 3) {
             ]);
 
             return result.response.text();
+
         } catch (err) {
-            console.warn(`⚠️ Tentativa ${i + 1} falhou: ${err.message}`);
-            if (i === tentativas - 1) throw err; // Se for a última, desiste e joga o erro
+            console.warn(`⚠️ Tentativa ${i + 1} falhou`);
+
+            if (i === tentativas - 1) throw err;
         }
     }
 }
 
-// --- 🏁 ROTA DE TESTE ---
+// --- 🏁 ROTA TESTE ---
 app.get('/', (req, res) => {
-    res.send('🛡️ Gangle Cloud está Online e Atenta no Railway! 🌿');
+    res.send('🛡️ i9-Guardian Backend Online');
 });
 
-// --- 🧠 ROTA PRINCIPAL DO CHAT ---
+// --- 🧠 CHAT ---
 app.post('/chat', async (req, res) => {
-    const { message, user, feeling } = req.body;
+    const { message, user = "Letícia", feeling = 5 } = req.body;
 
     if (!message) {
         return res.status(400).json({ reply: "Envie uma mensagem válida." });
     }
 
+    // --- 🧠 SALVA MEMÓRIA ---
+    if (!userMemory[user]) {
+        userMemory[user] = [];
+    }
+
+    userMemory[user].push(message);
+
+    // limita memória
+    if (userMemory[user].length > 5) {
+        userMemory[user].shift();
+    }
+
+    const historico = userMemory[user].join("\n");
+
+    // --- ✨ PROMPT INTELIGENTE ---
+    const prompt = `
+Você é a Gangle, uma IA emocional extremamente empática.
+
+Usuária: ${user}
+Humor: ${feeling}/10
+
+Histórico recente:
+${historico}
+
+Mensagem atual:
+"${message}"
+
+Regras:
+- Seja acolhedora, humana e breve
+- Use emojis leves 💛🌿✨
+- Nunca julgue
+- Se humor < 4 → resposta curta + validação emocional
+- Crie conexão emocional real
+`;
+
     try {
-        // Diagnóstico rápido de conexão
-        console.log(`📩 Mensagem recebida de: ${user || 'Letícia'} (Humor: ${feeling}/10)`);
+        console.time("⏱️ Gemini");
 
-        const prompt = `
-            Você é a Gangle, uma guardiã emocional acolhedora para o app i9-Guardian.
-            Cuide da pessoa chamada ${user || 'Letícia'}.
-            Humor atual: ${feeling || 5}/10.
+        const text = await gerarResposta(prompt);
 
-            - Seja empática 💛, calma e use emojis 🌿✨.
-            - Nunca julgue. Seja um porto seguro.
-            - Se humor < 4, use frases curtas e técnicas de respiração.
-            
-            Mensagem da usuária: "${message}"
-        `;
-
-        console.time("⏱️ Tempo de Resposta");
-        const text = await gerarRespostaComRetry(model, prompt);
-        console.timeEnd("⏱️ Tempo de Resposta");
+        console.timeEnd("⏱️ Gemini");
 
         res.json({ reply: text });
 
     } catch (error) {
-        // 🔥 LOGS DETALHADOS PARA DEBUG (Visível no painel do Railway)
-        console.error("🔥 ERRO DETALHADO NO BACKEND:",
-            error?.response?.data || error.message || error
-        );
+        console.error("🔥 ERRO FINAL:", error.message);
 
-        res.status(500).json({
-            reply: "💛 Estou com você, mesmo com conexão instável. Vamos respirar fundo e tentar de novo?"
-        });
+        const fallback = respostaFallback(message, feeling);
+
+        res.json({ reply: fallback });
     }
 });
 
-// --- 🚀 INICIALIZAÇÃO DO SERVIDOR ---
+// --- 🚀 START ---
 const PORT = process.env.PORT || 3000;
+
 app.listen(PORT, '0.0.0.0', () => {
-    console.log(`🚀 Gangle Cloud rodando na porta ${PORT}`);
+    console.log(`🚀 Servidor rodando na porta ${PORT}`);
 });
